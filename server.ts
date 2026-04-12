@@ -11,6 +11,10 @@ const CORS_HEADERS: Record<string, string> = {
   "Access-Control-Allow-Headers": "Content-Type",
 };
 
+// In-memory relay: roomId → [hostSocket, joinSocket?]
+// Each Deno Deploy instance handles its own WebSocket connections in memory.
+const wsRooms = new Map<string, WebSocket[]>();
+
 function clientIp(req: Request): string {
   return (
     req.headers.get("x-forwarded-for")?.split(",")[0].trim() ??
@@ -21,6 +25,53 @@ function clientIp(req: Request): string {
 
 Deno.serve(async (req: Request) => {
   const { pathname } = new URL(req.url);
+
+  // ── WebSocket relay /ws/:roomId ─────────────────────────────────────────────
+  const wsMatch = pathname.match(/^\/ws\/([^/]+)$/);
+  if (wsMatch && req.headers.get("upgrade") === "websocket") {
+    const roomId = wsMatch[1];
+    const { socket, response } = Deno.upgradeWebSocket(req);
+
+    socket.onopen = () => {
+      const peers = wsRooms.get(roomId) ?? [];
+      if (peers.length >= 2) {
+        socket.close(1008, "Room full");
+        return;
+      }
+      peers.push(socket);
+      wsRooms.set(roomId, peers);
+      // Notify both players once the second one connects
+      if (peers.length === 2) {
+        peers[0].send(JSON.stringify({ type: "peer_connected" }));
+        peers[1].send(JSON.stringify({ type: "peer_connected" }));
+      }
+    };
+
+    socket.onmessage = (e) => {
+      const peers = wsRooms.get(roomId);
+      if (!peers) return;
+      const idx = peers.indexOf(socket);
+      const other = peers[1 - idx];
+      if (other?.readyState === WebSocket.OPEN) {
+        other.send(e.data);
+      }
+    };
+
+    socket.onclose = () => {
+      const peers = wsRooms.get(roomId);
+      if (!peers) return;
+      const other = peers.find((p) => p !== socket);
+      if (other?.readyState === WebSocket.OPEN) {
+        other.send(JSON.stringify({ type: "peer_gone" }));
+        other.close();
+      }
+      wsRooms.delete(roomId);
+    };
+
+    socket.onerror = () => socket.close();
+
+    return response;
+  }
 
   // Pre-flight
   if (req.method === "OPTIONS") {
