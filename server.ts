@@ -41,8 +41,11 @@ Deno.serve(async (req: Request) => {
     const rawName = typeof body.name === "string" ? body.name.trim() : "";
     const name = rawName.length > 0 ? rawName.slice(0, 40) : "Chess Game";
     const port = typeof body.port === "number" ? body.port : 8080;
+    // Prefer client-reported IP (more reliable than edge-network header detection)
+    const rawIp = typeof body.ip === "string" ? body.ip.trim() : "";
+    const ip = rawIp.length > 0 ? rawIp : clientIp(req);
     const id = crypto.randomUUID();
-    const room = { id, name, ip: clientIp(req), port, created_at: Date.now() };
+    const room = { id, name, ip, port, created_at: Date.now() };
     await kv.set(["rooms", id], room, { expireIn: ROOM_TTL_MS });
     return new Response(JSON.stringify({ id }), { status: 201, headers: CORS_HEADERS });
   }
