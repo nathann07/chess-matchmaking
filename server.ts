@@ -9,6 +9,7 @@ const CORS_HEADERS: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
   "Access-Control-Allow-Headers": "Content-Type",
+  "Cache-Control": "no-store",
 };
 
 // In-memory relay: roomId → [hostSocket, joinSocket?]
@@ -81,7 +82,7 @@ Deno.serve(async (req: Request) => {
   // ── GET /rooms ──────────────────────────────────────────────────────────────
   if (req.method === "GET" && pathname === "/rooms") {
     const rooms: unknown[] = [];
-    for await (const { value } of kv.list({ prefix: ["rooms"] })) {
+    for await (const { value } of kv.list({ prefix: ["rooms"] }, { consistency: "strong" })) {
       rooms.push(value);
     }
     return new Response(JSON.stringify(rooms), { headers: CORS_HEADERS });
